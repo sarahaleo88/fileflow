@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/lixiansheng/fileflow/internal/limit"
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -21,29 +23,40 @@ type Client struct {
 	send     chan []byte
 	DeviceID string
 
-	mu              sync.Mutex
-	activeMessages  map[string]*MessageState
+	// Rate limiting
+	limiter     *rate.Limiter
+	connLimiter *limit.ConnLimiter
+	ip          string
+
+	mu             sync.Mutex
+	activeMessages map[string]*MessageState
 }
 
 type MessageState struct {
-	MsgID         string
-	ParaCount     int
-	TotalBytes    int
-	CurrentPara   int
+	MsgID       string
+	ParaCount   int
+	TotalBytes  int
+	CurrentPara int
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, deviceID string) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, deviceID, ip string, connLimiter *limit.ConnLimiter, rateLimit int) *Client {
 	return &Client{
 		hub:            hub,
 		conn:           conn,
 		send:           make(chan []byte, 256),
 		DeviceID:       deviceID,
 		activeMessages: make(map[string]*MessageState),
+		limiter:        rate.NewLimiter(rate.Limit(rateLimit), rateLimit), // Burst = rate
+		connLimiter:    connLimiter,
+		ip:             ip,
 	}
 }
 
 func (c *Client) ReadPump() {
 	defer func() {
+		if c.connLimiter != nil {
+			c.connLimiter.Decrement(c.ip)
+		}
 		c.hub.Unregister(c)
 		c.conn.Close()
 	}()
@@ -61,6 +74,11 @@ func (c *Client) ReadPump() {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("WebSocket error: %v", err)
 			}
+			break
+		}
+
+		if !c.limiter.Allow() {
+			log.Printf("Rate limit exceeded for client %s (%s)", c.DeviceID, c.ip)
 			break
 		}
 

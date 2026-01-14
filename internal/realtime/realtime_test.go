@@ -36,7 +36,7 @@ func TestHubClientRegistration(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "test-device")
+		client := NewClient(hub, conn, "test-device", "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -89,7 +89,7 @@ func TestPresenceBroadcast(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"))
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -128,7 +128,7 @@ func TestMessageForwarding(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"))
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -145,10 +145,12 @@ func TestMessageForwarding(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	for i := 0; i < 3; i++ {
-		conn1.ReadMessage()
-		conn2.ReadMessage()
-	}
+	// Drain presence messages
+	// conn1 receives: p1 (self), p2 (conn2)
+	conn1.ReadMessage()
+	conn1.ReadMessage()
+	// conn2 receives: p2 (self)
+	conn2.ReadMessage()
 
 	msgStart := Event{
 		Type:      EventMsgStart,
@@ -186,7 +188,7 @@ func TestSendFailWhenPeerOffline(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-solo")
+		client := NewClient(hub, conn, "device-solo", "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -241,7 +243,7 @@ func TestAckForwarding(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"))
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -258,10 +260,12 @@ func TestAckForwarding(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	for i := 0; i < 3; i++ {
-		sender.ReadMessage()
-		receiver.ReadMessage()
-	}
+	// Drain presence messages
+	// sender: p1, p2
+	sender.ReadMessage()
+	sender.ReadMessage()
+	// receiver: p2
+	receiver.ReadMessage()
 
 	ack := Event{
 		Type:      EventAck,
@@ -297,7 +301,7 @@ func TestConcurrentClients(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device")
+		client := NewClient(hub, conn, "device", "127.0.0.1", nil, 100)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()

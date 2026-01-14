@@ -30,6 +30,7 @@ func setupTestHandler(t *testing.T) (*Handler, func()) {
 	secretHash, _ := auth.HashSecret("test-secret")
 	tokenManager := auth.NewTokenManager([]byte("test-key"))
 	loginLimiter := limit.NewIPLimiter(rate.Every(time.Second), 5)
+	connLimiter := limit.NewConnLimiter(5, 100)
 	hub := realtime.NewHub()
 	go hub.Run()
 
@@ -37,6 +38,7 @@ func setupTestHandler(t *testing.T) (*Handler, func()) {
 		Store:         s,
 		TokenManager:  tokenManager,
 		LoginLimiter:  loginLimiter,
+		ConnLimiter:   connLimiter,
 		SecretHash:    secretHash,
 		Hub:           hub,
 		SecureCookies: false,

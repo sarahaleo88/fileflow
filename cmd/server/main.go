@@ -11,8 +11,10 @@ import (
 
 	"github.com/lixiansheng/fileflow/internal/auth"
 	"github.com/lixiansheng/fileflow/internal/handler"
+	"github.com/lixiansheng/fileflow/internal/limit"
 	"github.com/lixiansheng/fileflow/internal/realtime"
 	"github.com/lixiansheng/fileflow/internal/store"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -75,24 +77,24 @@ func run(cfg *config) error {
 		return err
 	}
 
-	challengeStore := auth.NewChallengeStore(cfg.ChallengeTTL)
-	defer challengeStore.Stop()
-
-	sessionStore := auth.NewSessionStore(cfg.SessionTTL)
-	defer sessionStore.Stop()
+	hash, _ := db.GetConfig(store.ConfigKeySecretHash)
+	tokenManager := auth.NewTokenManager([]byte(getEnv("JWT_SECRET", "dev-secret-key")))
+	connLimiter := limit.NewConnLimiter(5, 1000)
+	loginLimiter := limit.NewIPLimiter(rate.Limit(cfg.RateLimitRPS), 10)
 
 	hub := realtime.NewHub()
 	go hub.Run()
 	defer hub.Stop()
 
 	h := handler.New(handler.Config{
-		Store:          db,
-		ChallengeStore: challengeStore,
-		SessionStore:   sessionStore,
-		Hub:            hub,
-		BootstrapToken: cfg.BootstrapToken,
-		SecureCookies:  cfg.SecureCookies,
-		AllowedOrigin:  cfg.AppDomain,
+		Store:         db,
+		TokenManager:  tokenManager,
+		LoginLimiter:  loginLimiter,
+		ConnLimiter:   connLimiter,
+		SecretHash:    hash,
+		Hub:           hub,
+		SecureCookies: cfg.SecureCookies,
+		AllowedOrigin: cfg.AppDomain,
 	})
 
 	rateLimiter := handler.NewRateLimiter(cfg.RateLimitRPS, 10)

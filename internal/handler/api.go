@@ -19,6 +19,7 @@ type Handler struct {
 	store         *store.Store
 	tokenManager  *auth.TokenManager
 	loginLimiter  *limit.IPLimiter
+	connLimiter   *limit.ConnLimiter
 	secretHash    string
 	hub           *realtime.Hub
 	secureCookies bool
@@ -29,6 +30,7 @@ type Config struct {
 	Store         *store.Store
 	TokenManager  *auth.TokenManager
 	LoginLimiter  *limit.IPLimiter
+	ConnLimiter   *limit.ConnLimiter
 	SecretHash    string
 	Hub           *realtime.Hub
 	SecureCookies bool
@@ -40,6 +42,7 @@ func New(cfg Config) *Handler {
 		store:         cfg.Store,
 		tokenManager:  cfg.TokenManager,
 		loginLimiter:  cfg.LoginLimiter,
+		connLimiter:   cfg.ConnLimiter,
 		secretHash:    cfg.SecretHash,
 		hub:           cfg.Hub,
 		secureCookies: cfg.SecureCookies,
@@ -205,8 +208,16 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ip := getClientIP(r)
+	if h.connLimiter != nil && !h.connLimiter.Increment(ip) {
+		conn.Close()
+		log.Printf("Connection limit exceeded for %s", ip)
+		return
+	}
+
 	// Use Claims SID as DeviceID (now ClientID)
-	client := realtime.NewClient(h.hub, conn, claims.SID)
+	// Rate limit: 20 messages/second per client
+	client := realtime.NewClient(h.hub, conn, claims.SID, ip, h.connLimiter, 20)
 	h.hub.Register(client)
 
 	go client.WritePump()
