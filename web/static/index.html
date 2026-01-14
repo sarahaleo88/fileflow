@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="FileFlow - Real-time text transfer">
+    <title>FileFlow</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <header class="header">
+            <h1 class="logo">FileFlow</h1>
+            <div id="presence-bar" class="presence-bar">
+                <span class="presence-dot"></span>
+                <span id="presence-text">Connecting...</span>
+            </div>
+        </header>
+
+        <div id="view-unauthorized" class="view" style="display: none;">
+            <div class="unauthorized-message">
+                <h2>Unauthorized Device</h2>
+                <p>This device is not registered. Contact the administrator to enroll your device.</p>
+                <p class="device-id-display">Device ID: <code id="device-id-display"></code></p>
+            </div>
+        </div>
+
+        <div id="view-secret" class="view" style="display: none;">
+            <div class="secret-modal">
+                <h2>Enter Secret</h2>
+                <form id="secret-form">
+                    <input type="password" id="secret-input" placeholder="Enter your secret" autocomplete="off" required>
+                    <button type="submit">Authenticate</button>
+                </form>
+                <p id="secret-error" class="error-message"></p>
+            </div>
+        </div>
+
+        <div id="view-main" class="view" style="display: none;">
+            <main class="message-stream" id="message-stream"></main>
+            
+            <footer class="composer">
+                <textarea 
+                    id="composer-input" 
+                    placeholder="Type your message... (Cmd+Enter to send)"
+                    rows="3"
+                ></textarea>
+                <button id="send-button" class="send-button" disabled>Send</button>
+            </footer>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
