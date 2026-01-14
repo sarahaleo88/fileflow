@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -26,34 +27,56 @@ func main() {
 }
 
 type config struct {
-	ListenAddr     string
-	SQLitePath     string
-	BootstrapToken string
-	AppDomain      string
-	RateLimitRPS   float64
-	MaxBodyBytes   int64
-	SecureCookies  bool
-	SessionTTL     time.Duration
-	ChallengeTTL   time.Duration
+	ListenAddr      string
+	SQLitePath      string
+	AppDomain       string
+	RateLimitRPS    float64
+	MaxBodyBytes    int64
+	SecureCookies   bool
+	SessionTTL      time.Duration
+	ChallengeTTL    time.Duration
+	MaxWSConnPerIP  int
+	MaxWSConnGlobal int
 }
 
 func loadConfig() *config {
 	return &config{
-		ListenAddr:     getEnv("LISTEN_ADDR", ":8080"),
-		SQLitePath:     getEnv("SQLITE_PATH", "/data/fileflow.db"),
-		BootstrapToken: requireEnv("BOOTSTRAP_TOKEN"),
-		AppDomain:      getEnv("APP_DOMAIN", ""),
-		RateLimitRPS:   5,
-		MaxBodyBytes:   256 * 1024,
-		SecureCookies:  getEnv("SECURE_COOKIES", "true") == "true",
-		SessionTTL:     12 * time.Hour,
-		ChallengeTTL:   60 * time.Second,
+		ListenAddr:      getEnv("LISTEN_ADDR", ":8080"),
+		SQLitePath:      getEnv("SQLITE_PATH", "/data/fileflow.db"),
+		AppDomain:       getEnv("APP_DOMAIN", ""),
+		RateLimitRPS:    getEnvFloat("RATE_LIMIT_RPS", 5.0),
+		MaxBodyBytes:    256 * 1024,
+		SecureCookies:   getEnv("SECURE_COOKIES", "true") == "true",
+		SessionTTL:      12 * time.Hour,
+		ChallengeTTL:    60 * time.Second,
+		MaxWSConnPerIP:  getEnvInt("MAX_WS_CONN_PER_IP", 5),
+		MaxWSConnGlobal: getEnvInt("MAX_WS_CONN_GLOBAL", 1000),
 	}
 }
 
 func getEnv(key, defaultVal string) string {
 	if val := os.Getenv(key); val != "" {
 		return val
+	}
+	return defaultVal
+}
+
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		var f float64
+		if _, err := fmt.Sscanf(val, "%f", &f); err == nil {
+			return f
+		}
+	}
+	return defaultVal
+}
+
+func getEnvInt(key string, defaultVal int) int {
+	if val := os.Getenv(key); val != "" {
+		var i int
+		if _, err := fmt.Sscanf(val, "%d", &i); err == nil {
+			return i
+		}
 	}
 	return defaultVal
 }
@@ -73,13 +96,21 @@ func run(cfg *config) error {
 	}
 	defer db.Close()
 
-	if err := validateSecretHash(db); err != nil {
-		return err
+	// Secret Hash Loading Strategy:
+	// 1. Env var APP_SECRET_HASH
+	// 2. DB Config (store.ConfigKeySecretHash)
+	// 3. Fatal error
+	hash := os.Getenv("APP_SECRET_HASH")
+	if hash == "" {
+		var err error
+		hash, err = db.GetConfig(store.ConfigKeySecretHash)
+		if err != nil || hash == "" {
+			log.Fatal("APP_SECRET_HASH is required")
+		}
 	}
 
-	hash, _ := db.GetConfig(store.ConfigKeySecretHash)
-	tokenManager := auth.NewTokenManager([]byte(getEnv("JWT_SECRET", "dev-secret-key")))
-	connLimiter := limit.NewConnLimiter(5, 1000)
+	tokenManager := auth.NewTokenManager([]byte(getEnv("SESSION_KEY", "dev-session-key")))
+	connLimiter := limit.NewConnLimiter(cfg.MaxWSConnPerIP, cfg.MaxWSConnGlobal)
 	loginLimiter := limit.NewIPLimiter(rate.Limit(cfg.RateLimitRPS), 10)
 
 	hub := realtime.NewHub()
@@ -140,13 +171,4 @@ func run(cfg *config) error {
 
 	log.Println("Server stopped gracefully")
 	return nil
-}
-
-func validateSecretHash(db *store.Store) error {
-	_, err := db.GetConfig(store.ConfigKeySecretHash)
-	if err == store.ErrConfigNotFound {
-		log.Println("WARNING: No secret_hash configured. Run init-secret.sh to set one.")
-		return nil
-	}
-	return err
 }
