@@ -6,41 +6,43 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/lixiansheng/fileflow/internal/auth"
+	"github.com/lixiansheng/fileflow/internal/limit"
 	"github.com/lixiansheng/fileflow/internal/realtime"
 	"github.com/lixiansheng/fileflow/internal/store"
 )
 
 type Handler struct {
-	store          *store.Store
-	challengeStore *auth.ChallengeStore
-	sessionStore   *auth.SessionStore
-	hub            *realtime.Hub
-	bootstrapToken string
-	secureCookies  bool
-	upgrader       websocket.Upgrader
+	store         *store.Store
+	tokenManager  *auth.TokenManager
+	loginLimiter  *limit.IPLimiter
+	secretHash    string
+	hub           *realtime.Hub
+	secureCookies bool
+	upgrader      websocket.Upgrader
 }
 
 type Config struct {
-	Store          *store.Store
-	ChallengeStore *auth.ChallengeStore
-	SessionStore   *auth.SessionStore
-	Hub            *realtime.Hub
-	BootstrapToken string
-	SecureCookies  bool
-	AllowedOrigin  string
+	Store         *store.Store
+	TokenManager  *auth.TokenManager
+	LoginLimiter  *limit.IPLimiter
+	SecretHash    string
+	Hub           *realtime.Hub
+	SecureCookies bool
+	AllowedOrigin string
 }
 
 func New(cfg Config) *Handler {
 	h := &Handler{
-		store:          cfg.Store,
-		challengeStore: cfg.ChallengeStore,
-		sessionStore:   cfg.SessionStore,
-		hub:            cfg.Hub,
-		bootstrapToken: cfg.BootstrapToken,
-		secureCookies:  cfg.SecureCookies,
+		store:         cfg.Store,
+		tokenManager:  cfg.TokenManager,
+		loginLimiter:  cfg.LoginLimiter,
+		secretHash:    cfg.SecretHash,
+		hub:           cfg.Hub,
+		secureCookies: cfg.SecureCookies,
 	}
 
 	h.upgrader = websocket.Upgrader{
@@ -62,11 +64,9 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", h.handleHealthz)
-	mux.HandleFunc("/api/device/challenge", h.handleDeviceChallenge)
-	mux.HandleFunc("/api/device/attest", h.handleDeviceAttest)
-	mux.HandleFunc("/api/auth/secret", h.handleAuthSecret)
+	mux.HandleFunc("/api/login", h.handleLogin)
+	mux.HandleFunc("/api/session", h.handleSession)
 	mux.HandleFunc("/api/presence", h.handlePresence)
-	mux.HandleFunc("/api/admin/devices", h.handleAdminDevices)
 	mux.HandleFunc("/ws", h.handleWebSocket)
 	mux.Handle("/", http.FileServer(http.Dir("web/static")))
 
@@ -105,106 +105,15 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (h *Handler) handleDeviceChallenge(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		DeviceID string                 `json:"device_id"`
-		PubJWK   map[string]interface{} `json:"pub_jwk"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON body")
+func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Method not allowed")
 		return
 	}
 
-	if req.DeviceID == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_DEVICE_ID", "device_id is required")
-		return
-	}
-
-	if req.PubJWK == nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PUBLIC_KEY", "pub_jwk is required")
-		return
-	}
-
-	if err := auth.ValidateDeviceID(req.DeviceID, req.PubJWK); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_DEVICE_ID", err.Error())
-		return
-	}
-
-	if _, err := auth.ParseJWKPublicKey(req.PubJWK); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PUBLIC_KEY", err.Error())
-		return
-	}
-
-	challenge, err := h.challengeStore.Generate(req.DeviceID, req.PubJWK)
-	if err != nil {
-		log.Printf("Failed to generate challenge: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate challenge")
-		return
-	}
-
-	writeSuccess(w, map[string]string{
-		"challenge_id": challenge.ID,
-		"nonce":        challenge.NonceBase64(),
-	})
-}
-
-func (h *Handler) handleDeviceAttest(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ChallengeID string `json:"challenge_id"`
-		DeviceID    string `json:"device_id"`
-		Signature   string `json:"signature"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON body")
-		return
-	}
-
-	challenge, ok := h.challengeStore.Get(req.ChallengeID)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "CHALLENGE_EXPIRED", "Challenge not found or expired")
-		return
-	}
-
-	h.challengeStore.Delete(req.ChallengeID)
-
-	if challenge.DeviceID != req.DeviceID {
-		writeError(w, http.StatusBadRequest, "INVALID_DEVICE_ID", "Device ID mismatch")
-		return
-	}
-
-	pubKey, err := auth.ParseJWKPublicKey(challenge.PubJWK)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PUBLIC_KEY", err.Error())
-		return
-	}
-
-	if err := auth.VerifySignature(pubKey, challenge.Nonce, req.Signature); err != nil {
-		writeJSON(w, http.StatusOK, map[string]bool{"device_ok": false})
-		return
-	}
-
-	whitelisted, err := h.store.IsWhitelisted(req.DeviceID)
-	if err != nil {
-		log.Printf("Failed to check whitelist: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Database error")
-		return
-	}
-
-	if !whitelisted {
-		writeJSON(w, http.StatusOK, map[string]bool{"device_ok": false})
-		return
-	}
-
-	auth.SetDeviceTicketCookie(w, req.DeviceID, 10*time.Minute, h.secureCookies)
-	writeJSON(w, http.StatusOK, map[string]bool{"device_ok": true})
-}
-
-func (h *Handler) handleAuthSecret(w http.ResponseWriter, r *http.Request) {
-	deviceID := auth.GetDeviceTicketFromRequest(r)
-	if deviceID == "" {
-		writeError(w, http.StatusUnauthorized, "MISSING_DEVICE_TICKET", "Device ticket required")
+	ip := getClientIP(r)
+	if !h.loginLimiter.Allow(ip) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many requests")
 		return
 	}
 
@@ -217,41 +126,56 @@ func (h *Handler) handleAuthSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secretHash, err := h.store.GetConfig(store.ConfigKeySecretHash)
-	if err != nil {
-		log.Printf("Failed to get secret hash: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Configuration error")
-		return
-	}
-
-	if err := auth.VerifySecret(req.Secret, secretHash); err != nil {
+	if err := auth.VerifySecret(req.Secret, h.secretHash); err != nil {
 		writeJSON(w, http.StatusOK, map[string]bool{"authed": false})
 		return
 	}
 
-	session, err := h.sessionStore.Create(deviceID)
+	sid := uuid.NewString()
+	ttl := 30 * 24 * time.Hour
+	token, err := h.tokenManager.Sign(sid, 1, ttl)
 	if err != nil {
-		log.Printf("Failed to create session: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Session creation failed")
+		log.Printf("Failed to generate token: %v", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate token")
 		return
 	}
 
-	if err := h.store.UpdateLastSeen(deviceID); err != nil {
-		log.Printf("Failed to update last seen: %v", err)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "ff_session",
+		Value:    token,
+		Path:     "/",
+		Expires:  time.Now().Add(ttl),
+		HttpOnly: true,
+		Secure:   h.secureCookies,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]bool{"authed": true})
+}
+
+func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("ff_session")
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"authed": false})
+		return
 	}
 
-	auth.SetSessionCookie(w, session, h.secureCookies)
+	if _, err := h.tokenManager.Verify(cookie.Value); err != nil {
+		writeJSON(w, http.StatusOK, map[string]bool{"authed": false})
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]bool{"authed": true})
 }
 
 func (h *Handler) handlePresence(w http.ResponseWriter, r *http.Request) {
-	sessionID := auth.GetSessionFromRequest(r)
-	if sessionID == "" {
+	cookie, err := r.Cookie("ff_session")
+	if err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Session required")
 		return
 	}
 
-	if _, err := h.sessionStore.Get(sessionID); err != nil {
+	if _, err := h.tokenManager.Verify(cookie.Value); err != nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid session")
 		return
 	}
@@ -262,63 +186,14 @@ func (h *Handler) handlePresence(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) handleAdminDevices(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("X-Admin-Bootstrap")
-	if token == "" || token != h.bootstrapToken {
-		writeError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Invalid bootstrap token")
-		return
-	}
-
-	var req struct {
-		DeviceID string                 `json:"device_id"`
-		PubJWK   map[string]interface{} `json:"pub_jwk"`
-		Label    string                 `json:"label"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid JSON body")
-		return
-	}
-
-	if err := auth.ValidateDeviceID(req.DeviceID, req.PubJWK); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_DEVICE_ID", err.Error())
-		return
-	}
-
-	jwkJSON, err := json.Marshal(req.PubJWK)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PUBLIC_KEY", "Failed to serialize public key")
-		return
-	}
-
-	device := &store.Device{
-		DeviceID:   req.DeviceID,
-		PubJWKJSON: string(jwkJSON),
-		Label:      req.Label,
-		CreatedAt:  time.Now().UnixMilli(),
-	}
-
-	if err := h.store.AddDevice(device); err != nil {
-		if err == store.ErrDeviceExists {
-			writeError(w, http.StatusConflict, "DEVICE_EXISTS", "Device already enrolled")
-			return
-		}
-		log.Printf("Failed to add device: %v", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to add device")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]bool{"added": true})
-}
-
 func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	sessionID := auth.GetSessionFromRequest(r)
-	if sessionID == "" {
+	cookie, err := r.Cookie("ff_session")
+	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	session, err := h.sessionStore.Get(sessionID)
+	claims, err := h.tokenManager.Verify(cookie.Value)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -330,7 +205,8 @@ func (h *Handler) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := realtime.NewClient(h.hub, conn, session.DeviceID)
+	// Use Claims SID as DeviceID (now ClientID)
+	client := realtime.NewClient(h.hub, conn, claims.SID)
 	h.hub.Register(client)
 
 	go client.WritePump()

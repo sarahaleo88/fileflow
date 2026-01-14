@@ -2,10 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,35 +10,13 @@ import (
 	"time"
 
 	"github.com/lixiansheng/fileflow/internal/auth"
+	"github.com/lixiansheng/fileflow/internal/limit"
 	"github.com/lixiansheng/fileflow/internal/realtime"
 	"github.com/lixiansheng/fileflow/internal/store"
+	"golang.org/x/time/rate"
 )
 
-// generateTestKey generates a valid ECDSA P-256 key pair for testing
-func generateTestKey(t *testing.T) (map[string]interface{}, string) {
-	t.Helper()
-
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("Failed to generate key: %v", err)
-	}
-
-	pubJWK := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.X.Bytes()),
-		"y":   base64.RawURLEncoding.EncodeToString(privateKey.PublicKey.Y.Bytes()),
-	}
-
-	deviceID, err := auth.ComputeDeviceID(pubJWK)
-	if err != nil {
-		t.Fatalf("Failed to compute device ID: %v", err)
-	}
-
-	return pubJWK, deviceID
-}
-
-func setupTestHandler(t *testing.T) (*Handler, *store.Store, func()) {
+func setupTestHandler(t *testing.T) (*Handler, func()) {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -54,35 +28,31 @@ func setupTestHandler(t *testing.T) (*Handler, *store.Store, func()) {
 	}
 
 	secretHash, _ := auth.HashSecret("test-secret")
-	s.SetConfig(store.ConfigKeySecretHash, secretHash)
-
-	challengeStore := auth.NewChallengeStore(60 * time.Second)
-	sessionStore := auth.NewSessionStore(12 * time.Hour)
+	tokenManager := auth.NewTokenManager([]byte("test-key"))
+	loginLimiter := limit.NewIPLimiter(rate.Every(time.Second), 5)
 	hub := realtime.NewHub()
 	go hub.Run()
 
 	h := New(Config{
-		Store:          s,
-		ChallengeStore: challengeStore,
-		SessionStore:   sessionStore,
-		Hub:            hub,
-		BootstrapToken: "test-bootstrap-token",
-		SecureCookies:  false,
-		AllowedOrigin:  "",
+		Store:         s,
+		TokenManager:  tokenManager,
+		LoginLimiter:  loginLimiter,
+		SecretHash:    secretHash,
+		Hub:           hub,
+		SecureCookies: false,
+		AllowedOrigin: "",
 	})
 
 	cleanup := func() {
 		hub.Stop()
-		challengeStore.Stop()
-		sessionStore.Stop()
 		s.Close()
 	}
 
-	return h, s, cleanup
+	return h, cleanup
 }
 
 func TestHealthz(t *testing.T) {
-	h, _, cleanup := setupTestHandler(t)
+	h, cleanup := setupTestHandler(t)
 	defer cleanup()
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
@@ -102,186 +72,14 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestAdminDevicesEndpoint(t *testing.T) {
-	h, s, cleanup := setupTestHandler(t)
+func TestLoginEndpoint(t *testing.T) {
+	h, cleanup := setupTestHandler(t)
 	defer cleanup()
 
-	t.Run("ValidToken", func(t *testing.T) {
-		pubJWK, deviceID := generateTestKey(t)
-		body, _ := json.Marshal(map[string]interface{}{
-			"device_id": deviceID,
-			"pub_jwk":   pubJWK,
-			"label":     "Test",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/admin/devices", bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Admin-Bootstrap", "test-bootstrap-token")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-	})
-
-	t.Run("InvalidToken", func(t *testing.T) {
-		body := `{"device_id":"test-id-2","pub_jwk":{},"label":"Test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/admin/devices", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Admin-Bootstrap", "wrong-token")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d", rec.Code)
-		}
-	})
-
-	t.Run("MissingToken", func(t *testing.T) {
-		body := `{"device_id":"test-id-3","pub_jwk":{},"label":"Test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/admin/devices", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d", rec.Code)
-		}
-	})
-
-	t.Run("DuplicateDevice", func(t *testing.T) {
-		pubJWK, deviceID := generateTestKey(t)
-		jwkJSON, _ := json.Marshal(pubJWK)
-		s.AddDevice(&store.Device{
-			DeviceID:   deviceID,
-			PubJWKJSON: string(jwkJSON),
-			CreatedAt:  time.Now().UnixMilli(),
-		})
-
-		body, _ := json.Marshal(map[string]interface{}{
-			"device_id": deviceID,
-			"pub_jwk":   pubJWK,
-			"label":     "Dup",
-		})
-		req := httptest.NewRequest(http.MethodPost, "/api/admin/devices", bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Admin-Bootstrap", "test-bootstrap-token")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusConflict {
-			t.Errorf("Expected status 409, got %d", rec.Code)
-		}
-	})
-}
-
-func TestPresenceEndpoint(t *testing.T) {
-	h, _, cleanup := setupTestHandler(t)
-	defer cleanup()
-
-	t.Run("WithoutSession", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/presence", nil)
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d", rec.Code)
-		}
-	})
-}
-
-func TestDeviceChallengeEndpoint(t *testing.T) {
-	h, _, cleanup := setupTestHandler(t)
-	defer cleanup()
-
-	t.Run("ValidRequest", func(t *testing.T) {
-		pubJWK, deviceID := generateTestKey(t)
-
-		body, _ := json.Marshal(map[string]interface{}{
-			"device_id": deviceID,
-			"pub_jwk":   pubJWK,
-		})
-
-		req := httptest.NewRequest(http.MethodPost, "/api/device/challenge", bytes.NewBuffer(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Errorf("Expected status 200, got %d: %s", rec.Code, rec.Body.String())
-		}
-
-		var resp APIResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
-
-		if !resp.Success {
-			t.Error("Expected success: true")
-		}
-
-		if resp.Data == nil {
-			t.Fatal("Expected data in response")
-		}
-		data := resp.Data.(map[string]interface{})
-		if data["challenge_id"] == nil || data["nonce"] == nil {
-			t.Error("Expected challenge_id and nonce in response")
-		}
-	})
-
-	t.Run("MissingDeviceID", func(t *testing.T) {
-		body := `{"pub_jwk":{"kty":"EC"}}`
-		req := httptest.NewRequest(http.MethodPost, "/api/device/challenge", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", rec.Code)
-		}
-	})
-
-	t.Run("InvalidDeviceID", func(t *testing.T) {
-		body := `{"device_id":"wrong-id","pub_jwk":{"kty":"EC","crv":"P-256","x":"x","y":"y"}}`
-		req := httptest.NewRequest(http.MethodPost, "/api/device/challenge", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("Expected status 400, got %d", rec.Code)
-		}
-	})
-}
-
-func TestAuthSecretEndpoint(t *testing.T) {
-	h, _, cleanup := setupTestHandler(t)
-	defer cleanup()
-
-	t.Run("WithoutDeviceTicket", func(t *testing.T) {
+	t.Run("CorrectSecret", func(t *testing.T) {
 		body := `{"secret":"test-secret"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/secret", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		rec := httptest.NewRecorder()
-
-		h.Routes().ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("Expected status 401, got %d", rec.Code)
-		}
-	})
-
-	t.Run("WithDeviceTicket_CorrectSecret", func(t *testing.T) {
-		body := `{"secret":"test-secret"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/secret", bytes.NewBufferString(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: "device_ticket", Value: "test-device"})
 		rec := httptest.NewRecorder()
 
 		h.Routes().ServeHTTP(rec, req)
@@ -300,21 +98,20 @@ func TestAuthSecretEndpoint(t *testing.T) {
 		cookies := rec.Result().Cookies()
 		hasSession := false
 		for _, c := range cookies {
-			if c.Name == "session" {
+			if c.Name == "ff_session" {
 				hasSession = true
 				break
 			}
 		}
 		if !hasSession {
-			t.Error("Expected session cookie to be set")
+			t.Error("Expected ff_session cookie to be set")
 		}
 	})
 
-	t.Run("WithDeviceTicket_WrongSecret", func(t *testing.T) {
+	t.Run("WrongSecret", func(t *testing.T) {
 		body := `{"secret":"wrong-secret"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/secret", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.AddCookie(&http.Cookie{Name: "device_ticket", Value: "test-device"})
 		rec := httptest.NewRecorder()
 
 		h.Routes().ServeHTTP(rec, req)
@@ -328,6 +125,104 @@ func TestAuthSecretEndpoint(t *testing.T) {
 
 		if resp["authed"] {
 			t.Error("Expected authed: false")
+		}
+	})
+
+	t.Run("InvalidMethod", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/login", nil)
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Errorf("Expected status 405, got %d", rec.Code)
+		}
+	})
+}
+
+func TestSessionEndpoint(t *testing.T) {
+	h, cleanup := setupTestHandler(t)
+	defer cleanup()
+
+	sid := "test-sid"
+	validToken, _ := h.tokenManager.Sign(sid, 1, time.Hour)
+
+	t.Run("ValidSession", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+		req.AddCookie(&http.Cookie{Name: "ff_session", Value: validToken})
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
+		}
+
+		var resp map[string]bool
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if !resp["authed"] {
+			t.Error("Expected authed: true")
+		}
+	})
+
+	t.Run("InvalidSession", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+		req.AddCookie(&http.Cookie{Name: "ff_session", Value: "invalid-token"})
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		var resp map[string]bool
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp["authed"] {
+			t.Error("Expected authed: false")
+		}
+	})
+
+	t.Run("NoSession", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		var resp map[string]bool
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		if resp["authed"] {
+			t.Error("Expected authed: false")
+		}
+	})
+}
+
+func TestPresenceEndpoint(t *testing.T) {
+	h, cleanup := setupTestHandler(t)
+	defer cleanup()
+
+	t.Run("WithoutSession", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/presence", nil)
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Expected status 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("WithSession", func(t *testing.T) {
+		sid := "test-sid"
+		validToken, _ := h.tokenManager.Sign(sid, 1, time.Hour)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/presence", nil)
+		req.AddCookie(&http.Cookie{Name: "ff_session", Value: validToken})
+		rec := httptest.NewRecorder()
+
+		h.Routes().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("Expected status 200, got %d", rec.Code)
 		}
 	})
 }
