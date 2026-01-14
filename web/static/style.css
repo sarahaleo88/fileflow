@@ -83,31 +83,26 @@ body {
     padding: 20px;
 }
 
-.unauthorized-message,
 .secret-modal {
     background: var(--bg-secondary);
     padding: 40px;
     border-radius: 12px;
     text-align: center;
     max-width: 400px;
+    width: 100%;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    border: 1px solid var(--border);
 }
 
-.unauthorized-message h2,
 .secret-modal h2 {
-    margin-bottom: 16px;
+    margin-bottom: 8px;
+    color: var(--text-primary);
 }
 
-.unauthorized-message p {
+.modal-subtitle {
     color: var(--text-secondary);
-    margin-bottom: 16px;
-}
-
-.device-id-display code {
-    background: var(--bg-tertiary);
-    padding: 4px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    word-break: break-all;
+    margin-bottom: 24px;
+    font-size: 0.875rem;
 }
 
 #secret-form {
