@@ -5,6 +5,14 @@ All notable changes to FileFlow will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-01-14
+
+### Changed
+- **Security**: Upgraded Go from 1.24.0 to 1.24.11 to fix standard library vulnerabilities (GO-2025-4008, GO-2025-4175, etc).
+- **CI/CD**: Improved GitHub Actions workflow robustness and updated dependencies.
+- **Documentation**: Added comprehensive [TUTORIAL.md](./TUTORIAL.md) for local setup and usage.
+- **Build**: Fixed Makefile `typecheck` target for better local development support.
+
 ## [0.1.0] - 2025-01-13
 
 ### Added
