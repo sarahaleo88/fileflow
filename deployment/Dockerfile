@@ -12,7 +12,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux go build -o fileflow ./cmd/server
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates sqlite wget
 
