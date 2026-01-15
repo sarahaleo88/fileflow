@@ -58,9 +58,61 @@ const FileFlow = (function () {
                 $viewMain.style.display = 'flex';
                 break;
             case 'unauthorized':
-                if ($viewUnauthorized) $viewUnauthorized.style.display = 'flex';
+                if ($viewUnauthorized) {
+                    $viewUnauthorized.style.display = 'flex';
+                    setupEnrollForm();
+                }
                 break;
         }
+    }
+
+    function setupEnrollForm() {
+        const $enrollForm = document.getElementById('enroll-form');
+        const $enrollTokenInput = document.getElementById('enroll-token-input');
+        const $enrollError = document.getElementById('enroll-error');
+
+        if (!$enrollForm || $enrollForm.dataset.setup) return;
+        $enrollForm.dataset.setup = 'true';
+
+        $enrollForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            $enrollError.textContent = '';
+
+            const token = $enrollTokenInput.value.trim();
+            if (!token) return;
+
+            try {
+                const identity = await getOrCreateIdentity();
+                const res = await fetch('/api/admin/devices', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Admin-Bootstrap': token
+                    },
+                    body: JSON.stringify({
+                        device_id: identity.deviceId,
+                        pub_jwk: identity.publicJwk,
+                        label: navigator.userAgent.slice(0, 50)
+                    })
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.added) {
+                    // Re-try the device ticket flow
+                    const ticketOk = await ensureDeviceTicket();
+                    if (ticketOk) {
+                        showView('secret');
+                        setupSecretForm();
+                    }
+                } else {
+                    $enrollError.textContent = data.error?.message || 'Enrollment failed. Check your token.';
+                }
+            } catch (err) {
+                console.error('Enrollment failed:', err);
+                $enrollError.textContent = 'Network error. Please try again.';
+            }
+        });
     }
 
     let identityPromise = null;
@@ -232,9 +284,9 @@ const FileFlow = (function () {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     credentials: 'include',
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         secret,
-                        device_id: identity.deviceId 
+                        device_id: identity.deviceId
                     })
                 });
 

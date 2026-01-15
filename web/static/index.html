@@ -27,9 +27,15 @@
         <div id="view-unauthorized" class="view" style="display: none;">
             <div class="secret-modal">
                 <h2>Unauthorized Device</h2>
-                <p class="modal-subtitle">This device is not registered. Contact the administrator to enroll your
-                    device.</p>
+                <p class="modal-subtitle">This device is not registered. Enter the admin Bootstrap Token to enroll, or
+                    contact the administrator.</p>
                 <div id="device-id-display"></div>
+                <form id="enroll-form" style="margin-top: 1rem;">
+                    <input type="password" id="enroll-token-input" placeholder="Bootstrap Token" autocomplete="off"
+                        required>
+                    <button type="submit">Enroll Device</button>
+                </form>
+                <p id="enroll-error" class="error-message"></p>
             </div>
         </div>
 

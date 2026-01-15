@@ -24,6 +24,7 @@ services:
     restart: unless-stopped
     environment:
       - APP_DOMAIN=${APP_DOMAIN}
+      - APP_SECRET_HASH=${APP_SECRET_HASH}
       - BOOTSTRAP_TOKEN=${BOOTSTRAP_TOKEN}
       - SQLITE_PATH=/data/fileflow.db
       - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-5}
