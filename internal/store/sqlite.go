@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"sync"
 
-	sqlite3 "github.com/mattn/go-sqlite3"
+	sqlite "modernc.org/sqlite"
+	lib "modernc.org/sqlite/lib"
 )
 
 // Store wraps the SQLite database connection.
@@ -18,7 +19,7 @@ type Store struct {
 
 // New creates a new Store and initializes the database schema.
 func New(dbPath string) (*Store, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
@@ -65,10 +66,10 @@ func (s *Store) AddDevice(d *Device) error {
 	stmt := `INSERT INTO devices (device_id, pub_jwk_json, label, created_at) VALUES (?, ?, ?, ?)`
 	_, err := s.db.Exec(stmt, d.DeviceID, d.PubJWKJSON, d.Label, d.CreatedAt)
 	if err != nil {
-		var sqliteErr sqlite3.Error
+		var sqliteErr *sqlite.Error
 		if errors.As(err, &sqliteErr) {
-			if sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey ||
-				sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+			if sqliteErr.Code() == lib.SQLITE_CONSTRAINT_PRIMARYKEY ||
+				sqliteErr.Code() == lib.SQLITE_CONSTRAINT_UNIQUE {
 				return ErrDeviceExists
 			}
 		}

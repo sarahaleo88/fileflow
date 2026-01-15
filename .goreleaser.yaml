@@ -4,7 +4,7 @@ project_name: fileflow
 
 builds:
   - env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -14,9 +14,6 @@ builds:
       - arm64
     main: ./cmd/server
     binary: fileflow
-    ignore:
-      - goos: windows
-        goarch: arm64
 
 archives:
   - format: tar.gz
