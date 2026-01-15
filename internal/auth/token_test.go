@@ -49,7 +49,7 @@ func TestTokenManager_Expired(t *testing.T) {
 	tm := NewTokenManager(secret)
 
 	// Negative TTL
-	token, err := tm.Sign("sid", 1, -time.Minute)
+	token, err := tm.Sign("sid", TokenVersionSession, -time.Minute)
 	if err != nil {
 		t.Fatalf("Sign failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestTokenManager_Tampered(t *testing.T) {
 	secret := []byte("test-secret")
 	tm := NewTokenManager(secret)
 
-	token, err := tm.Sign("sid", 1, time.Hour)
+	token, err := tm.Sign("sid", TokenVersionSession, time.Hour)
 	if err != nil {
 		t.Fatalf("Sign failed: %v", err)
 	}

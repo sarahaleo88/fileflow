@@ -6,20 +6,20 @@ import (
 )
 
 const (
-	EventPresence   = "presence"
-	EventMsgStart   = "msg_start"
-	EventParaStart  = "para_start"
-	EventParaChunk  = "para_chunk"
-	EventParaEnd    = "para_end"
-	EventMsgEnd     = "msg_end"
-	EventAck        = "ack"
-	EventSendFail   = "send_fail"
+	EventPresence  = "presence"
+	EventMsgStart  = "msg_start"
+	EventParaStart = "para_start"
+	EventParaChunk = "para_chunk"
+	EventParaEnd   = "para_end"
+	EventMsgEnd    = "msg_end"
+	EventAck       = "ack"
+	EventSendFail  = "send_fail"
 )
 
 const (
-	MaxChunkSize      = 4 * 1024
-	MaxMessageSize    = 256 * 1024
-	MaxParagraphs     = 512
+	MaxChunkSize   = 4 * 1024
+	MaxMessageSize = 256 * 1024
+	MaxParagraphs  = 512
 )
 
 type Event struct {
@@ -90,12 +90,12 @@ func (e *Event) GetMsgID() string {
 	if e.Value == nil {
 		return ""
 	}
-	
+
 	valueMap, ok := e.Value.(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	
+
 	msgID, _ := valueMap["msgId"].(string)
 	return msgID
 }
@@ -104,12 +104,12 @@ func (e *Event) GetParaIndex() int {
 	if e.Value == nil {
 		return -1
 	}
-	
+
 	valueMap, ok := e.Value.(map[string]interface{})
 	if !ok {
 		return -1
 	}
-	
+
 	idx, ok := valueMap["i"].(float64)
 	if !ok {
 		return -1
@@ -121,12 +121,12 @@ func (e *Event) GetChunkText() string {
 	if e.Value == nil {
 		return ""
 	}
-	
+
 	valueMap, ok := e.Value.(map[string]interface{})
 	if !ok {
 		return ""
 	}
-	
+
 	text, _ := valueMap["s"].(string)
 	return text
 }

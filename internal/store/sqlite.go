@@ -3,10 +3,11 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 
-	_ "github.com/mattn/go-sqlite3"
+	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 // Store wraps the SQLite database connection.
@@ -40,6 +41,58 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+// DB returns the underlying database connection for advanced queries.
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
+var (
+	ErrDeviceExists   = fmt.Errorf("device already exists")
+	ErrDeviceNotFound = errors.New("device not found")
+)
+
+type Device struct {
+	DeviceID   string `json:"device_id"`
+	PubJWKJSON string `json:"pub_jwk_json"`
+	Label      string `json:"label"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+func (s *Store) AddDevice(d *Device) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stmt := `INSERT INTO devices (device_id, pub_jwk_json, label, created_at) VALUES (?, ?, ?, ?)`
+	_, err := s.db.Exec(stmt, d.DeviceID, d.PubJWKJSON, d.Label, d.CreatedAt)
+	if err != nil {
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) {
+			if sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey ||
+				sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+				return ErrDeviceExists
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Store) GetDevice(deviceID string) (*Device, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var d Device
+	err := s.db.QueryRow("SELECT device_id, pub_jwk_json, label, created_at FROM devices WHERE device_id = ?", deviceID).
+		Scan(&d.DeviceID, &d.PubJWKJSON, &d.Label, &d.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrDeviceNotFound
+		}
+		return nil, err
+	}
+	return &d, nil
+}
+
 // migrate creates the database schema if it doesn't exist.
 func (s *Store) migrate() error {
 	schema := `
@@ -47,13 +100,14 @@ func (s *Store) migrate() error {
 		key TEXT PRIMARY KEY,
 		value TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS devices (
+		device_id TEXT PRIMARY KEY,
+		pub_jwk_json TEXT NOT NULL,
+		label TEXT,
+		created_at INTEGER NOT NULL
+	);
 	`
 
 	_, err := s.db.Exec(schema)
 	return err
-}
-
-// DB returns the underlying database connection for advanced queries.
-func (s *Store) DB() *sql.DB {
-	return s.db
 }

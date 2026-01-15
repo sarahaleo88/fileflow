@@ -1,13 +1,72 @@
 package handler
 
 import (
+	"bufio"
+	"errors"
 	"log"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 )
+
+var (
+	trustedCIDRs []*net.IPNet
+	muTrusted    sync.RWMutex
+)
+
+func SetTrustedProxies(cidrs []string) error {
+	muTrusted.Lock()
+	defer muTrusted.Unlock()
+
+	var parsed []*net.IPNet
+	for _, cidr := range cidrs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		if strings.Contains(cidr, "/") {
+			_, network, err := net.ParseCIDR(cidr)
+			if err != nil {
+				return errors.New("invalid trusted proxy: " + cidr)
+			}
+			parsed = append(parsed, network)
+			continue
+		}
+
+		ip := net.ParseIP(cidr)
+		if ip == nil {
+			return errors.New("invalid trusted proxy: " + cidr)
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		parsed = append(parsed, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	trustedCIDRs = parsed
+	return nil
+}
+
+func isTrusted(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	muTrusted.RLock()
+	defer muTrusted.RUnlock()
+
+	for _, cidr := range trustedCIDRs {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
 
 type RateLimiter struct {
 	mu       sync.RWMutex
@@ -74,13 +133,45 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 }
 
 func getClientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	if !isTrusted(host) {
+		return host
+	}
+
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return xff
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip := strings.TrimSpace(parts[i])
+			if ip == "" {
+				continue
+			}
+			if !isTrusted(ip) {
+				return ip
+			}
+		}
 	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
+
+	// Fallback to X-Real-IP only if XFF didn't yield a client and we trust remote
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		if net.ParseIP(xri) != nil {
+			return xri
+		}
 	}
-	return r.RemoteAddr
+
+	return host
+}
+
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func LoggingMiddleware(next http.Handler) http.Handler {
@@ -102,6 +193,15 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+
+	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("underlying response writer does not support Hijack")
+	}
+	return hijacker.Hijack()
 }
 
 func CORSMiddleware(allowedOrigin string) func(http.Handler) http.Handler {

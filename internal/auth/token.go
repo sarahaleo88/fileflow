@@ -16,6 +16,12 @@ var (
 	ErrTokenExpired     = errors.New("token expired")
 	ErrInvalidSignature = errors.New("invalid signature")
 	ErrInvalidFormat    = errors.New("invalid token format")
+	ErrInvalidVersion   = errors.New("invalid token version")
+)
+
+const (
+	TokenVersionSession      = 1
+	TokenVersionDeviceTicket = 2
 )
 
 type Claims struct {
@@ -91,6 +97,17 @@ func (tm *TokenManager) Verify(token string) (*Claims, error) {
 	}
 
 	return &claims, nil
+}
+
+func (tm *TokenManager) VerifyWithVersion(token string, version int) (*Claims, error) {
+	claims, err := tm.Verify(token)
+	if err != nil {
+		return nil, err
+	}
+	if claims.Ver != version {
+		return nil, ErrInvalidVersion
+	}
+	return claims, nil
 }
 
 func (tm *TokenManager) computeHMAC(data string) []byte {

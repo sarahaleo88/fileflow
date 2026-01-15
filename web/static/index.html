@@ -1,12 +1,19 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="FileFlow - Real-time text transfer">
+    <meta name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="FileFlow - Premium Real-time Transfer">
+    <meta name="theme-color" content="#f5f5f0">
     <title>FileFlow</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div id="app">
         <header class="header">
@@ -16,6 +23,15 @@
                 <span id="presence-text">Connecting...</span>
             </div>
         </header>
+
+        <div id="view-unauthorized" class="view" style="display: none;">
+            <div class="secret-modal">
+                <h2>Unauthorized Device</h2>
+                <p class="modal-subtitle">This device is not registered. Contact the administrator to enroll your
+                    device.</p>
+                <div id="device-id-display"></div>
+            </div>
+        </div>
 
         <div id="view-secret" class="view" style="display: none;">
             <div class="secret-modal">
@@ -31,18 +47,22 @@
 
         <div id="view-main" class="view" style="display: none;">
             <main class="message-stream" id="message-stream"></main>
-            
+
             <footer class="composer">
-                <textarea 
-                    id="composer-input" 
-                    placeholder="Type your message... (Cmd+Enter to send)"
-                    rows="3"
-                ></textarea>
-                <button id="send-button" class="send-button" disabled>Send</button>
+                <textarea id="composer-input" placeholder="Type a message..." rows="1"></textarea>
+                <button id="send-button" class="send-button" disabled>
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M22 2L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                            stroke-linejoin="round" />
+                        <path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" stroke-width="2"
+                            stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                </button>
             </footer>
         </div>
     </div>
 
     <script src="app.js"></script>
 </body>
+
 </html>

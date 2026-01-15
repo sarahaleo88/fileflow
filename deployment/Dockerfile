@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.21-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev sqlite-dev
 
@@ -24,7 +24,10 @@ COPY --from=builder /app/deployment/scripts ./scripts
 
 RUN chmod +x ./scripts/*.sh
 
-RUN mkdir -p /data
+RUN addgroup -S fileflow && adduser -S -G fileflow -H -u 10001 fileflow
+RUN mkdir -p /data && chown -R fileflow:fileflow /app /data
+
+USER fileflow
 
 EXPOSE 8080
 

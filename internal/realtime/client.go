@@ -15,6 +15,7 @@ const (
 	pongWait       = 60 * time.Second
 	pingPeriod     = (pongWait * 9) / 10
 	maxMessageSize = 256 * 1024
+	maxActiveMsgs  = 100
 )
 
 type Client struct {
@@ -24,9 +25,10 @@ type Client struct {
 	DeviceID string
 
 	// Rate limiting
-	limiter     *rate.Limiter
-	connLimiter *limit.ConnLimiter
-	ip          string
+	limiter        *rate.Limiter
+	connLimiter    *limit.ConnLimiter
+	ip             string
+	maxMessageSize int
 
 	mu             sync.Mutex
 	activeMessages map[string]*MessageState
@@ -39,7 +41,10 @@ type MessageState struct {
 	CurrentPara int
 }
 
-func NewClient(hub *Hub, conn *websocket.Conn, deviceID, ip string, connLimiter *limit.ConnLimiter, rateLimit int) *Client {
+func NewClient(hub *Hub, conn *websocket.Conn, deviceID, ip string, connLimiter *limit.ConnLimiter, rateLimit int, maxMessageBytes int) *Client {
+	if maxMessageBytes <= 0 {
+		maxMessageBytes = maxMessageSize
+	}
 	return &Client{
 		hub:            hub,
 		conn:           conn,
@@ -49,6 +54,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, deviceID, ip string, connLimiter 
 		limiter:        rate.NewLimiter(rate.Limit(rateLimit), rateLimit), // Burst = rate
 		connLimiter:    connLimiter,
 		ip:             ip,
+		maxMessageSize: maxMessageBytes,
 	}
 }
 
@@ -61,7 +67,7 @@ func (c *Client) ReadPump() {
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadLimit(int64(c.maxMessageSize))
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -121,6 +127,11 @@ func (c *Client) handleMsgStart(event *Event, data []byte) {
 	}
 
 	c.mu.Lock()
+	if len(c.activeMessages) >= maxActiveMsgs {
+		c.mu.Unlock()
+		c.sendFail(msgID, "too_many_active_messages")
+		return
+	}
 	c.activeMessages[msgID] = &MessageState{
 		MsgID:       msgID,
 		ParaCount:   0,
@@ -175,7 +186,7 @@ func (c *Client) handleParaChunk(event *Event, data []byte) {
 	}
 
 	state.TotalBytes += chunkLen
-	if state.TotalBytes > MaxMessageSize {
+	if state.TotalBytes > c.maxMessageSize {
 		c.mu.Unlock()
 		c.sendFail(msgID, "message_too_large")
 		return

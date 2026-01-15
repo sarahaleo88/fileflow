@@ -36,7 +36,7 @@ func TestHubClientRegistration(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "test-device", "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "test-device", "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -89,7 +89,7 @@ func TestPresenceBroadcast(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -128,7 +128,7 @@ func TestMessageForwarding(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -188,7 +188,7 @@ func TestSendFailWhenPeerOffline(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-solo", "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "device-solo", "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -243,7 +243,7 @@ func TestAckForwarding(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "device-"+r.URL.Query().Get("id"), "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()
@@ -301,7 +301,7 @@ func TestConcurrentClients(t *testing.T) {
 			return
 		}
 
-		client := NewClient(hub, conn, "device", "127.0.0.1", nil, 100)
+		client := NewClient(hub, conn, "device", "127.0.0.1", nil, 100, MaxMessageSize)
 		hub.Register(client)
 		go client.WritePump()
 		client.ReadPump()

@@ -1,5 +1,8 @@
 package auth
 
+// Deprecated: This file contains legacy session logic that is replaced by stateless tokens (token.go).
+// It will be removed in future versions.
+
 import (
 	"crypto/rand"
 	"encoding/base64"
@@ -115,10 +118,10 @@ func SetSessionCookie(w http.ResponseWriter, session *Session, secure bool) {
 	})
 }
 
-func SetDeviceTicketCookie(w http.ResponseWriter, deviceID string, ttl time.Duration, secure bool) {
+func SetDeviceTicketCookie(w http.ResponseWriter, ticket string, ttl time.Duration, secure bool) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     "device_ticket",
-		Value:    deviceID,
+		Value:    ticket,
 		Path:     "/",
 		Expires:  time.Now().Add(ttl),
 		HttpOnly: true,

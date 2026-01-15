@@ -95,10 +95,13 @@ docker compose exec app ./scripts/enroll-device.sh <device_id> "Device Label"
 |----------|----------|---------|-------------|
 | `APP_DOMAIN` | Yes | - | Domain for CORS/origin validation and cookie scope |
 | `BOOTSTRAP_TOKEN` | Yes | - | Admin token for device enrollment API |
+| `SESSION_KEY` | Yes (prod) | - | HMAC key for session + device ticket tokens |
 | `SQLITE_PATH` | No | `/data/fileflow.db` | Path to SQLite database file |
 | `RATE_LIMIT_RPS` | No | `5` | Requests per second rate limit per IP |
 | `MAX_WS_MSG_BYTES` | No | `262144` | Maximum WebSocket message size (256KB) |
-| `SESSION_TTL_HOURS` | No | `12` | Session cookie time-to-live |
+| `SESSION_TTL_HOURS` | No | `12` | Session cookie time-to-live (hours) |
+| `SECURE_COOKIES` | No | `true` | Require Secure cookies (HTTPS) |
+| `TRUSTED_PROXY_CIDRS` | No | - | Comma-separated CIDR/IPs to trust for X-Forwarded-For |
 
 ---
 
@@ -204,20 +207,20 @@ Response: {"ok": true}
    Response: { challenge_id, nonce }
 
 2. POST /api/device/attest
-   Body: { challenge_id, signature }
+   Body: { challenge_id, device_id, signature }
    Response: Sets device_ticket cookie
    
-3. POST /api/auth/secret
+3. POST /api/login
    Requires: device_ticket cookie
-   Body: { secret }
-   Response: Sets session cookie
+   Body: { secret, device_id }
+   Response: Sets ff_session cookie
 ```
 
 ### WebSocket
 
 ```
 GET /ws
-Requires: session cookie
+Requires: session cookie + device_ticket cookie
 Protocol: JSON events with envelope { t: type, v: value, ts: timestamp }
 ```
 
