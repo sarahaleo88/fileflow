@@ -1,6 +1,6 @@
 module github.com/lixiansheng/fileflow
 
-go 1.24.10
+go 1.24.11
 
 require (
 	github.com/gorilla/websocket v1.5.3
